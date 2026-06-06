@@ -50,6 +50,8 @@ private slots:
     void write();
 
     void stopNotOwnChildren();
+    void sharedChildIntensity();
+    void sharedChildIntensityWhileStarting();
 
 private:
     Doc* m_doc;

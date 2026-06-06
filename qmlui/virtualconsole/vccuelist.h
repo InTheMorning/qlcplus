@@ -151,6 +151,7 @@ public:
 
 protected:
     qreal getPrimaryIntensity() const;
+    void syncCrossfadePrimarySideForStartup();
     int getFadeMode() const;
     void stopStepIfNeeded(Chaser *ch);
 

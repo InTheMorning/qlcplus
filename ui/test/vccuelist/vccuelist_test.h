@@ -44,6 +44,7 @@ private slots:
 
     void nextPrevious();
     void manualActivation();
+    void crossfadeStartsAtFullIntensityFromBottom();
     void keyboardNextPrevious();
     void submasterWorksAfterSliderModeRoundTrip();
 

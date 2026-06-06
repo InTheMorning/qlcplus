@@ -322,6 +322,24 @@ qreal VCCueList::getPrimaryIntensity() const
     return m_primaryTop ? qreal(m_sideFaderLevel / 100.0) : qreal((100 - m_sideFaderLevel) / 100.0);
 }
 
+void VCCueList::syncCrossfadePrimarySideForStartup()
+{
+    if (sideFaderMode() != FaderMode::Crossfade)
+        return;
+
+    bool primaryTop = m_primaryTop;
+    if (m_sideFaderLevel == 0)
+        primaryTop = false;
+    else if (m_sideFaderLevel == 100)
+        primaryTop = true;
+
+    if (primaryTop == m_primaryTop)
+        return;
+
+    m_primaryTop = primaryTop;
+    emit primaryTopChanged();
+}
+
 int VCCueList::getFadeMode() const
 {
     if (sideFaderMode() == Steps)
@@ -658,6 +676,7 @@ void VCCueList::startChaser(int startIndex)
         return;
 
     adjustFunctionIntensity(ch, intensity());
+    syncCrossfadePrimarySideForStartup();
 
     ChaserAction action;
     action.m_action = ChaserSetStepIndex;

@@ -140,6 +140,7 @@ public:
      *********************************************************************/
 private:
     FunctionParent functionParent() const;
+    qreal childIntensity(quint32 childId, bool includeSelf) const;
 
 public:
     /** @reimpl */
@@ -164,6 +165,8 @@ protected slots:
 protected:
     /** Number of currently running children */
     QSet <quint32> m_runningChildren;
+    /** True while preRun() is starting children and m_runningChildren is incomplete */
+    bool m_startingChildren;
     unsigned int m_tick;
 
     /*************************************************************************

@@ -594,4 +594,101 @@ void Collection_Test::stopNotOwnChildren()
     QVERIFY(s2->stopped() == true);
 }
 
+void Collection_Test::sharedChildIntensity()
+{
+    Doc* doc = new Doc(this);
+
+    Scene* shared = new Scene(doc);
+    doc->addFunction(shared);
+
+    Scene* unique1 = new Scene(doc);
+    doc->addFunction(unique1);
+
+    Scene* unique2 = new Scene(doc);
+    doc->addFunction(unique2);
+
+    Collection* c1 = new Collection(doc);
+    c1->addFunction(shared->id());
+    c1->addFunction(unique1->id());
+    doc->addFunction(c1);
+
+    Collection* c2 = new Collection(doc);
+    c2->addFunction(shared->id());
+    c2->addFunction(unique2->id());
+    doc->addFunction(c2);
+
+    QList<Universe*> ua;
+    ua.append(new Universe(0, new GrandMaster()));
+    MasterTimerStub* mts = new MasterTimerStub(doc, ua);
+
+    int c1Intensity = c1->requestAttributeOverride(Function::Intensity, 0.75);
+    c1->start(mts, FunctionParent::master());
+    QCOMPARE(shared->getAttributeValue(Function::Intensity), qreal(0.75));
+    QCOMPARE(unique1->getAttributeValue(Function::Intensity), qreal(0.75));
+
+    int c2Intensity = c2->requestAttributeOverride(Function::Intensity, 0.25);
+    c2->start(mts, FunctionParent::master());
+    QCOMPARE(shared->getAttributeValue(Function::Intensity), qreal(1.0));
+    QCOMPARE(unique1->getAttributeValue(Function::Intensity), qreal(0.75));
+    QCOMPARE(unique2->getAttributeValue(Function::Intensity), qreal(0.25));
+
+    c1->adjustAttribute(0.5, c1Intensity);
+    QCOMPARE(shared->getAttributeValue(Function::Intensity), qreal(0.75));
+    QCOMPARE(unique1->getAttributeValue(Function::Intensity), qreal(0.5));
+    QCOMPARE(unique2->getAttributeValue(Function::Intensity), qreal(0.25));
+
+    c2->adjustAttribute(0.5, c2Intensity);
+    QCOMPARE(shared->getAttributeValue(Function::Intensity), qreal(1.0));
+    QCOMPARE(unique1->getAttributeValue(Function::Intensity), qreal(0.5));
+    QCOMPARE(unique2->getAttributeValue(Function::Intensity), qreal(0.5));
+
+    delete mts;
+    delete doc;
+}
+
+void Collection_Test::sharedChildIntensityWhileStarting()
+{
+    Doc* doc = new Doc(this);
+
+    Scene* shared = new Scene(doc);
+    doc->addFunction(shared);
+
+    Scene* unique1 = new Scene(doc);
+    doc->addFunction(unique1);
+
+    Scene* unique2 = new Scene(doc);
+    doc->addFunction(unique2);
+
+    Collection* running = new Collection(doc);
+    running->addFunction(shared->id());
+    running->addFunction(unique1->id());
+    doc->addFunction(running);
+
+    Collection* starting = new Collection(doc);
+    starting->addFunction(shared->id());
+    starting->addFunction(unique2->id());
+    doc->addFunction(starting);
+
+    QList<Universe*> ua;
+    ua.append(new Universe(0, new GrandMaster()));
+    MasterTimerStub* mts = new MasterTimerStub(doc, ua);
+
+    int runningIntensity = running->requestAttributeOverride(Function::Intensity, 0.95);
+    running->start(mts, FunctionParent::master());
+    QCOMPARE(shared->getAttributeValue(Function::Intensity), qreal(0.95));
+    QCOMPARE(unique1->getAttributeValue(Function::Intensity), qreal(0.95));
+
+    starting->requestAttributeOverride(Function::Intensity, 0.05);
+    starting->m_startingChildren = true;
+
+    running->adjustAttribute(0.94, runningIntensity);
+    QVERIFY(qAbs(shared->getAttributeValue(Function::Intensity) - qreal(0.99)) < qreal(0.0001));
+    QCOMPARE(unique1->getAttributeValue(Function::Intensity), qreal(0.94));
+
+    starting->m_startingChildren = false;
+
+    delete mts;
+    delete doc;
+}
+
 QTEST_APPLESS_MAIN(Collection_Test)

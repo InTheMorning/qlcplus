@@ -155,6 +155,7 @@ private:
 private:
     /** Get the intensity of the current primary slider */
     qreal getPrimaryIntensity() const;
+    void syncCrossfadePrimarySideForStartup();
 
 public:
     /** @reimp */

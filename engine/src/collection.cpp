@@ -40,6 +40,8 @@ Collection::Collection(Doc* doc)
 #if QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
     , m_functionListMutex(QMutex::Recursive)
 #endif
+    , m_startingChildren(false)
+    , m_tick(0)
 {
     setName(tr("New Collection"));
 
@@ -284,41 +286,81 @@ FunctionParent Collection::functionParent() const
     return FunctionParent(FunctionParent::Function, id());
 }
 
+qreal Collection::childIntensity(quint32 childId, bool includeSelf) const
+{
+    qreal intensity = includeSelf ? getAttributeValue(Function::Intensity) : 0.0;
+    Doc *document = doc();
+    Q_ASSERT(document != NULL);
+
+    foreach (Function *function, document->functions())
+    {
+        if (function == this || function->type() != Function::CollectionType)
+            continue;
+
+        Collection *collection = qobject_cast<Collection *>(function);
+        if (collection == NULL)
+            continue;
+
+        QMutexLocker locker(&collection->m_functionListMutex);
+        const bool controlsChild = collection->m_runningChildren.contains(childId) ||
+                                   (collection->m_startingChildren && collection->m_functions.contains(childId));
+        if ((collection->isRunning() || collection->m_startingChildren) && controlsChild)
+            intensity += collection->getAttributeValue(Function::Intensity);
+    }
+
+    return qBound(qreal(0.0), intensity, qreal(1.0));
+}
+
 void Collection::preRun(MasterTimer *timer)
 {
     Doc *doc = this->doc();
     Q_ASSERT(doc != NULL);
+    QList<quint32> functions;
     {
         QMutexLocker locker(&m_functionListMutex);
+        m_startingChildren = true;
         m_runningChildren.clear();
-        foreach (quint32 fid, m_functions)
-        {
-            Function *function = doc->function(fid);
-            Q_ASSERT(function != NULL);
-
-            m_intensityOverrideIds << function->requestAttributeOverride(Function::Intensity, getAttributeValue(Function::Intensity));
-
-            // Append the IDs of all functions started by this collection
-            // to a set so that we can track which of them are still controlled
-            // by this collection which are not.
-            m_runningChildren << function->id();
-
-            // Listen to the children's stopped signals so that this Collection
-            // can give up its rights to stop the function later.
-            connect(function, SIGNAL(stopped(quint32)),
-                    this, SLOT(slotChildStopped(quint32)));
-
-            // Listen to the children's stopped signals so that this collection
-            // can give up its rights to stop the function later.
-            connect(function, SIGNAL(running(quint32)),
-                    this, SLOT(slotChildStarted(quint32)));
-
-            //function->adjustAttribute(getAttributeValue(Function::Intensity), Function::Intensity);
-            function->start(timer, functionParent(), 0, overrideFadeInSpeed(), overrideFadeOutSpeed(), overrideDuration());
-        }
+        m_intensityOverrideIds.clear();
+        functions = m_functions;
         m_tick = 1;
     }
+
+    foreach (quint32 fid, functions)
+    {
+        Function *function = doc->function(fid);
+        Q_ASSERT(function != NULL);
+
+        {
+            QMutexLocker locker(&m_functionListMutex);
+            m_runningChildren << function->id();
+        }
+
+        const qreal intensity = childIntensity(function->id(), true);
+        const int intensityOverrideId = function->requestAttributeOverride(Function::Intensity, intensity);
+        {
+            QMutexLocker locker(&m_functionListMutex);
+            m_intensityOverrideIds << intensityOverrideId;
+        }
+
+        // Listen to the children's stopped signals so that this Collection
+        // can give up its rights to stop the function later.
+        connect(function, SIGNAL(stopped(quint32)),
+                this, SLOT(slotChildStopped(quint32)));
+
+        // Listen to the children's stopped signals so that this collection
+        // can give up its rights to stop the function later.
+        connect(function, SIGNAL(running(quint32)),
+                this, SLOT(slotChildStarted(quint32)));
+
+        //function->adjustAttribute(getAttributeValue(Function::Intensity), Function::Intensity);
+        function->start(timer, functionParent(), 0, overrideFadeInSpeed(), overrideFadeOutSpeed(), overrideDuration());
+    }
+
     Function::preRun(timer);
+    {
+        QMutexLocker locker(&m_functionListMutex);
+        m_startingChildren = false;
+    }
 }
 
 void Collection::setPause(bool enable)
@@ -379,29 +421,49 @@ void Collection::postRun(MasterTimer* timer, QList<Universe *> universes)
 {
     Doc* doc = qobject_cast <Doc*> (parent());
     Q_ASSERT(doc != NULL);
+    QSet<quint32> runningChildren;
+    QList<quint32> functions;
+    QList<int> intensityOverrideIds;
+    unsigned int tick = 0;
 
     {
         QMutexLocker locker(&m_functionListMutex);
-        /** Stop the member functions only if they have been started by this
-            collection. */
-        QSetIterator <quint32> it(m_runningChildren);
-        while (it.hasNext() == true)
+        runningChildren = m_runningChildren;
+        functions = m_functions;
+        intensityOverrideIds = m_intensityOverrideIds;
+        tick = m_tick;
+    }
+
+    /** Stop the member functions only if they have been started by this
+        collection. */
+    QSetIterator <quint32> it(runningChildren);
+    while (it.hasNext() == true)
+    {
+        Function* function = doc->function(it.next());
+        Q_ASSERT(function != NULL);
+        function->stop(functionParent());
+
+        int functionIndex = functions.indexOf(function->id());
+        if (function->stopped() == false && functionIndex >= 0 && functionIndex < intensityOverrideIds.size())
         {
-            Function* function = doc->function(it.next());
-            Q_ASSERT(function != NULL);
-            function->stop(functionParent());
+            const qreal intensity = childIntensity(function->id(), false);
+            function->adjustAttribute(intensity, intensityOverrideIds.at(functionIndex));
         }
+    }
 
+    {
+        QMutexLocker locker(&m_functionListMutex);
         m_runningChildren.clear();
+        m_startingChildren = false;
 
-        for (int i = 0; i < m_functions.count(); i++)
+        for (int i = 0; i < functions.count(); i++)
         {
-            Function* function = doc->function(m_functions.at(i));
+            Function* function = doc->function(functions.at(i));
             Q_ASSERT(function != NULL);
 
             disconnect(function, SIGNAL(stopped(quint32)),
                     this, SLOT(slotChildStopped(quint32)));
-            if (m_tick == 2)
+            if (tick == 2)
             {
                 disconnect(function, SIGNAL(running(quint32)),
                         this, SLOT(slotChildStarted(quint32)));
@@ -430,18 +492,28 @@ int Collection::adjustAttribute(qreal fraction, int attributeId)
 {
     int attrIndex = Function::adjustAttribute(fraction, attributeId);
 
-    if (isRunning() && attrIndex == Intensity)
+    if (attrIndex == Intensity)
     {
         Doc* document = doc();
         Q_ASSERT(document != NULL);
+        QList<quint32> functions;
+        QList<int> intensityOverrideIds;
 
-        QMutexLocker locker(&m_functionListMutex);
-
-        for (int i = 0; i < m_functions.count(); i++)
         {
-            Function* function = document->function(m_functions.at(i));
+            QMutexLocker locker(&m_functionListMutex);
+            if (isRunning() == false && m_startingChildren == false)
+                return attrIndex;
+
+            functions = m_functions;
+            intensityOverrideIds = m_intensityOverrideIds;
+        }
+
+        const int overrideCount = qMin(functions.count(), intensityOverrideIds.count());
+        for (int i = 0; i < overrideCount; i++)
+        {
+            Function* function = document->function(functions.at(i));
             Q_ASSERT(function != NULL);
-            function->adjustAttribute(getAttributeValue(Function::Intensity), m_intensityOverrideIds.at(i));
+            function->adjustAttribute(childIntensity(function->id(), true), intensityOverrideIds.at(i));
         }
     }
 

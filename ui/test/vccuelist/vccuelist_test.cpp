@@ -813,6 +813,33 @@ void VCCueList_Test::manualActivation()
     QCOMPARE(timer->m_functionList[1], s1);
 }
 
+void VCCueList_Test::crossfadeStartsAtFullIntensityFromBottom()
+{
+    QWidget w;
+    VCCueList cl(&w, m_doc);
+    Chaser* c = createChaser(m_doc);
+    c->setDuration(Function::infiniteSpeed());
+    cl.setChaser(c->id());
+    cl.setSideFaderMode(VCCueList::Crossfade);
+    cl.slotSetSideFaderValue(0);
+
+    Scene* s1 = qobject_cast<Scene*> (m_doc->function(c->steps()[0].fid));
+    Q_ASSERT(s1);
+
+    m_doc->setMode(Doc::Operate);
+    MasterTimer* timer = m_doc->masterTimer();
+
+    cl.slotPlayback();
+    timer->timerTick();
+    timer->timerTick();
+
+    QCOMPARE(c->runningStepsNumber(), 1);
+    QCOMPARE(cl.primaryTop(), false);
+    QCOMPARE(cl.topStepValue(), QString("#2"));
+    QCOMPARE(cl.bottomStepValue(), QString("#1"));
+    QCOMPARE(s1->getAttributeValue(Function::Intensity), qreal(1.0));
+}
+
 void VCCueList_Test::keyboardNextPrevious()
 {
     QWidget w;
